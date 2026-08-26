@@ -18,7 +18,11 @@ mix dead_code.public
 mix dead_code.public --only-likely-dead
 mix dead_code.public --include-review
 mix dead_code.public --verify MyApp.MyModule.foo/2
+mix dead_code.check
 ```
+
+The **dead code score** is the count of `:likely_dead` public functions. Configure `:max_score`
+and run `mix dead_code.check` in CI to block regressions.
 
 Add project-specific suppressions in `.dead_code_ignore.exs` at the host project root.
 
@@ -34,7 +38,8 @@ config :dead_code,
   default_router_module: MyAppWeb.Router,
   partner_module_prefix: "Elixir.MyAppWeb.Partners.",
   modal_show_regex: ~r/MyModals\.show\(\s*([\w\.]+)/,
-  rpc_handlers: [{MyAppWeb.RPC, :handle_request, 2}]
+  rpc_handlers: [{MyAppWeb.RPC, :handle_request, 2}],
+  max_score: 950
 ```
 
 Optional keys:
@@ -51,6 +56,7 @@ Optional keys:
 | `rpc_handlers` | `[]` | Extra dynamic RPC entry MFAs |
 | `partner_module_prefix` | `nil` | Module prefix for optional plugin callbacks |
 | `modal_show_regex` | `nil` | Regex with capture group 1 = modal module |
+| `max_score` | `nil` | Fail `mix dead_code.check` when score exceeds this value |
 
 ## Report buckets
 

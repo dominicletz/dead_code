@@ -12,8 +12,13 @@ defmodule Mix.Tasks.DeadCode.Public do
       mix dead_code.public --only-likely-dead
       mix dead_code.public --include-review
       mix dead_code.public --verify Model.App.foo/2
+      mix dead_code.check
+      mix dead_code.check --max-score 950
 
-  ## Buckets
+  ## Score
+
+  The dead code **score** is the count of `:likely_dead` public functions — actionable
+  unused code. Use `mix dead_code.check` in CI with `:max_score` configured to prevent regressions.
 
   - `likely_dead` — no callers in lib/ or test/, not matched by entry-point scanners
   - `test_only` — callers exist only under `test/`
@@ -69,11 +74,11 @@ defmodule Mix.Tasks.DeadCode.Public do
     end
   end
 
-  defp run_verify(mfa_string, analyze_opts, opts) do
+  defp run_verify(mfa_string, analyze_opts, _opts) do
     case DeadCode.Analyze.verify(mfa_string, analyze_opts) do
       %{} = result ->
         print_verify(result)
-        maybe_fail(0, opts)
+        :ok
 
       {:error, reason} ->
         Mix.raise("Invalid --verify MFA (#{inspect(reason)}). Example: Model.App.foo/2")
@@ -100,7 +105,15 @@ defmodule Mix.Tasks.DeadCode.Public do
       Mix.shell().info("Wrote #{path}")
     end
 
-    maybe_fail(Map.get(analysis.totals, :likely_dead, 0), opts)
+    maybe_fail(analysis, opts)
+  end
+
+  defp maybe_fail(%{score: %{value: value}}, opts) do
+    threshold = Keyword.get(opts, :"fail-above", 0)
+
+    if threshold > 0 and value > threshold do
+      Mix.raise("Dead code score #{value} exceeds threshold #{threshold}")
+    end
   end
 
   defp analyze_opts(opts) do
@@ -126,12 +139,4 @@ defmodule Mix.Tasks.DeadCode.Public do
   defp parse_format("md"), do: :md
   defp parse_format("both"), do: :both
   defp parse_format(other), do: Mix.raise("Invalid --format #{other}. Use json, md, or both.")
-
-  defp maybe_fail(count, opts) do
-    threshold = Keyword.get(opts, :"fail-above", 0)
-
-    if threshold > 0 and count > threshold do
-      Mix.raise("Found #{count} likely_dead public functions (threshold #{threshold})")
-    end
-  end
 end

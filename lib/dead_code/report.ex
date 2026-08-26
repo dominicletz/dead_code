@@ -1,7 +1,7 @@
 defmodule DeadCode.Report do
   @moduledoc false
 
-  alias DeadCode.{Config, MFA}
+  alias DeadCode.{Config, MFA, Score}
 
   @json_name "unused_public_functions.json"
   @md_name "unused_public_functions.md"
@@ -22,9 +22,12 @@ defmodule DeadCode.Report do
     paths
   end
 
-  defp encode_analysis(%{generated_at: generated_at, totals: totals, results: results} = analysis) do
+  defp encode_analysis(
+         %{generated_at: generated_at, totals: totals, results: results, score: score} = analysis
+       ) do
     base = %{
       generated_at: generated_at,
+      score: score,
       totals: totals,
       results: Enum.map(results, &encode_result/1)
     }
@@ -64,8 +67,9 @@ defmodule DeadCode.Report do
     end
   end
 
-  defp print_summary(%{totals: totals, results: results, excluded: excluded}) do
+  defp print_summary(%{totals: totals, results: results, score: score, excluded: excluded}) do
     Mix.shell().info("Unused public function report")
+    Mix.shell().info("  dead code score: #{Score.format(score)}")
     Mix.shell().info("  likely_dead: #{Map.get(totals, :likely_dead, 0)}")
     Mix.shell().info("  test_only:   #{Map.get(totals, :test_only, 0)}")
     Mix.shell().info("  review:      #{Map.get(totals, :review, 0)}")
@@ -77,11 +81,13 @@ defmodule DeadCode.Report do
     Mix.shell().info("  total:       #{length(results)}")
   end
 
-  defp print_summary(%{totals: totals, results: results}) do
-    print_summary(%{totals: totals, results: results, excluded: %{}})
+  defp print_summary(%{totals: totals, results: results, score: score}) do
+    print_summary(%{totals: totals, results: results, score: score, excluded: %{}})
   end
 
-  defp markdown(%{generated_at: generated_at, totals: totals, results: results} = analysis) do
+  defp markdown(
+         %{generated_at: generated_at, totals: totals, results: results, score: score} = analysis
+       ) do
     excluded = Map.get(analysis, :excluded, %{})
     review_excluded = Map.get(excluded, :review, 0)
 
@@ -116,6 +122,8 @@ defmodule DeadCode.Report do
     # Unused public functions
 
     Generated: #{generated_at}
+
+    Dead code score: **#{score.value}** (#{Float.round(score.ratio * 100, 2)}% of #{score.public_exports} public exports)
 
     | Category | Count |
     |----------|------:|

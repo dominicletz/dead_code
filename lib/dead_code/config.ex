@@ -18,4 +18,5 @@ defmodule DeadCode.Config do
   def rpc_handlers, do: get(:rpc_handlers, [])
   def partner_module_prefix, do: get(:partner_module_prefix)
   def modal_show_regex, do: get(:modal_show_regex)
+  def max_score, do: get(:max_score)
 end

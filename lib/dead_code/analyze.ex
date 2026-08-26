@@ -1,7 +1,16 @@
 defmodule DeadCode.Analyze do
   @moduledoc false
 
-  alias DeadCode.{CollectExports, EntryPoints, Ignore, MFA, SourceIndex, TestReferences, XrefUsed}
+  alias DeadCode.{
+    CollectExports,
+    EntryPoints,
+    Ignore,
+    MFA,
+    Score,
+    SourceIndex,
+    TestReferences,
+    XrefUsed
+  }
 
   def run(opts \\ []) do
     source_index = SourceIndex.build()
@@ -34,6 +43,8 @@ defmodule DeadCode.Analyze do
     %{
       generated_at: DateTime.utc_now() |> DateTime.to_iso8601(),
       totals: count_by_category(filtered),
+      all_totals: count_by_category(results),
+      score: Score.compute(results),
       excluded: excluded_totals(results, opts),
       results: filtered
     }
