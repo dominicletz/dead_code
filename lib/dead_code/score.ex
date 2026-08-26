@@ -49,6 +49,6 @@ defmodule DeadCode.Score do
 
   def format(%{value: value, public_exports: public_exports, ratio: ratio}) do
     pct = Float.round(ratio * 100, 2)
-    "score #{value} (#{pct}% of #{public_exports} public exports)"
+    "#{value} (#{pct}% of #{public_exports} public exports)"
   end
 end

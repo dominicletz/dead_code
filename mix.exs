@@ -1,7 +1,7 @@
 defmodule DeadCode.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.1.2"
   @source_url "https://github.com/dominicletz/dead_code"
 
   def project do
