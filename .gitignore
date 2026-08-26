@@ -1,0 +1,6 @@
+/_build/
+/deps/
+/.fetch
+/erl_crash.dump
+*.ez
+/priv/reports/
