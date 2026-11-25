@@ -3,17 +3,13 @@ defmodule DeadCode.SourceIndex do
 
   alias DeadCode.Config
 
-  def build do
-    lib_files = Path.wildcard(Config.lib_glob())
+  def build(config \\ nil, opts \\ []) do
+    config = config || Config.load(opts)
+    lib_files = Path.wildcard(config.lib_glob) |> Enum.map(&normalize_path/1)
 
     module_to_file =
-      lib_files
-      |> Enum.filter(&String.ends_with?(&1, ".ex"))
-      |> Enum.reduce(%{}, fn path, acc ->
-        case module_name(path) do
-          nil -> acc
-          module -> Map.put(acc, module, path)
-        end
+      Keyword.get_lazy(opts, :module_to_file, fn ->
+        build_module_to_file(config, opts)
       end)
 
     %{
@@ -22,16 +18,71 @@ defmodule DeadCode.SourceIndex do
     }
   end
 
-  def module_name(path) do
-    case File.read(path) do
-      {:ok, content} ->
-        case Regex.run(~r/defmodule\s+([\w\.]+)/, content) do
-          [_, mod_str] -> Module.concat([mod_str])
-          _ -> nil
+  defp build_module_to_file(config, opts) do
+    modules = resolve_modules(config, opts)
+
+    Enum.reduce(modules, %{}, fn module, acc ->
+      case module_file(module) do
+        nil -> acc
+        file -> Map.put(acc, module, file)
+      end
+    end)
+  end
+
+  def resolve_modules(config, opts \\ []) do
+    case Keyword.get(opts, :modules) do
+      mods when is_list(mods) ->
+        mods
+
+      nil ->
+        case config.otp_app do
+          nil ->
+            []
+
+          otp_app ->
+            ensure_app_loaded(otp_app)
+
+            case :application.get_key(otp_app, :modules) do
+              {:ok, mods} -> mods
+              :undefined -> []
+            end
         end
+    end
+  end
+
+  def ensure_app_loaded(otp_app) do
+    case Application.load(otp_app) do
+      :ok -> :ok
+      {:error, {:already_loaded, _}} -> :ok
+      _ -> :ok
+    end
+  end
+
+  def module_file(module) do
+    case beam_debug_info(module) do
+      {:ok, %{file: file}} when is_binary(file) or is_list(file) ->
+        normalize_path(to_string(file))
 
       _ ->
-        nil
+        with {:module, _} <- Code.ensure_loaded(module),
+             compile_info when is_list(compile_info) <- module.module_info(:compile),
+             source when is_list(source) or is_binary(source) <-
+               Keyword.get(compile_info, :source) do
+          normalize_path(to_string(source))
+        else
+          _ -> nil
+        end
+    end
+  end
+
+  def beam_debug_info(module) do
+    with [_ | _] = path <- :code.which(module),
+         {:ok, {_, [debug_info: {:debug_info_v1, backend, data}]}} <-
+           :beam_lib.chunks(path, [:debug_info]),
+         {:ok, info} <- backend.debug_info(:elixir_v1, module, data, []) do
+      {:ok, info}
+    else
+      _ -> :error
     end
   end
 
@@ -46,6 +97,8 @@ defmodule DeadCode.SourceIndex do
     end)
   end
 
+  def normalize_path(path) when is_list(path), do: path |> to_string() |> normalize_path()
+
   def lib_file?(path), do: String.starts_with?(normalize_path(path), "lib/")
   def test_file?(path), do: String.starts_with?(normalize_path(path), "test/")
 
@@ -55,18 +108,12 @@ defmodule DeadCode.SourceIndex do
       |> String.replace_prefix("path:", "")
       |> String.replace("\\", "/")
 
-    Path.wildcard(glob)
-    |> Enum.filter(&String.ends_with?(&1, ".ex"))
-    |> Enum.map(&module_name/1)
-    |> Enum.reject(&is_nil/1)
-    |> MapSet.new()
-    |> then(fn modules ->
-      module_to_file
-      |> Map.filter(fn {_mod, file} -> file in Path.wildcard(glob) end)
-      |> Map.keys()
-      |> MapSet.new()
-      |> MapSet.union(modules)
-    end)
-    |> MapSet.to_list()
+    matched_files =
+      Path.wildcard(glob)
+      |> MapSet.new(&normalize_path/1)
+
+    module_to_file
+    |> Enum.filter(fn {_mod, file} -> MapSet.member?(matched_files, normalize_path(file)) end)
+    |> Enum.map(fn {mod, _file} -> mod end)
   end
 end

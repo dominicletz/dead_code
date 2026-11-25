@@ -1,8 +1,6 @@
 defmodule DeadCode.MFA do
   @moduledoc false
 
-  @type t :: {module(), atom(), non_neg_integer()}
-
   def format({module, function, arity}) do
     "#{inspect(module)}.#{function}/#{arity}"
   end
@@ -11,11 +9,15 @@ defmodule DeadCode.MFA do
     string |> String.trim() |> parse_slash()
   end
 
+  def parse_module(string) when is_binary(string) do
+    string |> String.trim() |> quoted_atom_module()
+  end
+
   defp parse_slash(string) do
     case Regex.run(~r/^(.+)\.([^\/]+)\/(\d+)$/, string) do
       [_, mod_str, fun_str, arity_str] ->
         with {:ok, module} <- quoted_atom_module(mod_str),
-             {:ok, function} <- quoted_atom(fun_str),
+             {:ok, function} <- parse_function_atom(fun_str),
              {arity, ""} <- Integer.parse(arity_str) do
           {:ok, {module, function, arity}}
         else
@@ -40,10 +42,15 @@ defmodule DeadCode.MFA do
     end
   end
 
-  defp quoted_atom(string) do
+  defp parse_function_atom(""), do: {:error, :invalid_function}
+
+  defp parse_function_atom(string) do
     case Code.string_to_quoted(":" <> string) do
-      {:ok, atom} when is_atom(atom) -> {:ok, atom}
-      _ -> {:error, :invalid_function}
+      {:ok, atom} when is_atom(atom) ->
+        {:ok, atom}
+
+      _ ->
+        {:ok, String.to_atom(string)}
     end
   end
 
@@ -51,6 +58,7 @@ defmodule DeadCode.MFA do
     name_str = Atom.to_string(name)
 
     not String.starts_with?(name_str, "__") and
+      not String.starts_with?(name_str, "MACRO-") and
       name not in [:module_info, :behaviour_info]
   end
 end

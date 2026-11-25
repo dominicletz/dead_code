@@ -1,23 +1,25 @@
 defmodule Mix.Tasks.DeadCode.Check do
   @shortdoc "Fail when dead code score exceeds configured maximum"
   @moduledoc """
-  Runs dead code analysis and fails when the score exceeds `:max_score` in config.
+  Runs dead code analysis and fails when the score exceeds `:max_score` in `dead_code.exs`
+  (or `--max-score`).
 
   The score counts public functions classified as `:likely_dead` (actionable dead code).
 
   ## Usage
 
       mix dead_code.check
-      mix dead_code.check --max-score 950
+      mix dead_code.check --max-score 25
+      mix dead_code.check --config dead_code.exs
 
-  Configure the limit in the host project:
+  Configure the limit in `dead_code.exs`:
 
-      config :dead_code, max_score: 950
+      [max_score: 25]
   """
 
   use Mix.Task
 
-  @switches [max_score: :integer, "no-compile": :boolean]
+  @switches [max_score: :integer, "no-compile": :boolean, config: :string]
 
   @impl Mix.Task
   def run(args) do
@@ -25,12 +27,13 @@ defmodule Mix.Tasks.DeadCode.Check do
     {opts, _args, _} = OptionParser.parse(args, strict: @switches)
 
     unless opts[:"no-compile"] do
-      Mix.Task.run("compile", ["--force"])
+      Mix.Task.run("compile")
     end
 
-    analysis = DeadCode.Analyze.run([])
+    analyze_opts = [config: opts[:config]]
+    analysis = DeadCode.Analyze.run(analyze_opts)
     score = analysis.score
-    max = opts[:max_score] || DeadCode.Config.max_score()
+    max = opts[:max_score] || DeadCode.Config.max_score(analyze_opts)
 
     if is_integer(max) do
       DeadCode.Score.check!(score, max)

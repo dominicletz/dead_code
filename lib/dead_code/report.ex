@@ -7,7 +7,7 @@ defmodule DeadCode.Report do
   @md_name "unused_public_functions.md"
 
   def write!(analysis, opts \\ []) do
-    report_dir = Config.report_dir()
+    report_dir = Config.report_dir(opts)
     File.mkdir_p!(report_dir)
 
     formats = Keyword.get(opts, :format, :both)
@@ -145,8 +145,8 @@ defmodule DeadCode.Report do
     "- `#{MFA.format(mfa)}` (#{file}) — callers: #{caller_summary}"
   end
 
-  def report_paths do
-    report_dir = Config.report_dir()
+  def report_paths(opts \\ []) do
+    report_dir = Config.report_dir(opts)
 
     [
       Path.join(report_dir, @json_name),

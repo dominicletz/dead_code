@@ -1,7 +1,7 @@
 defmodule DeadCode.MixProject do
   use Mix.Project
 
-  @version "0.1.2"
+  @version "0.2.0"
   @source_url "https://github.com/dominicletz/dead_code"
 
   def project do
@@ -9,13 +9,17 @@ defmodule DeadCode.MixProject do
       app: :dead_code,
       version: @version,
       elixir: "~> 1.14",
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      description: "Find unused public functions via compile xref and entry-point heuristics",
+      description: "Find unused public functions via BEAM debug_info and entry-point heuristics",
       package: package(),
       source_url: @source_url
     ]
   end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   defp deps do
     [{:jason, "~> 1.3"}]

@@ -3,6 +3,7 @@ defmodule DeadCode.Analyze do
 
   alias DeadCode.{
     CollectExports,
+    Config,
     EntryPoints,
     Ignore,
     MFA,
@@ -13,21 +14,29 @@ defmodule DeadCode.Analyze do
   }
 
   def run(opts \\ []) do
-    source_index = SourceIndex.build()
-    ignore = Ignore.load(source_index, Keyword.get(opts, :ignore_path, ".dead_code_ignore.exs"))
+    config = Config.load(opts)
+    collected = CollectExports.collect(config, opts)
 
-    exports = CollectExports.all(Keyword.put(opts, :source_index, source_index))
-    calls = XrefUsed.calls()
+    source_index =
+      SourceIndex.build(config, Keyword.put(opts, :module_to_file, collected.module_to_file))
+
+    ignore =
+      Ignore.load(source_index, config, Keyword.get(opts, :ignore_path, ".dead_code_ignore.exs"))
+
+    beam_calls = XrefUsed.calls(collected, source_index)
+    test_callers = TestReferences.callers_by_callee(config, collected, opts)
 
     callers_by_callee =
-      calls
+      beam_calls
       |> XrefUsed.callers_by_callee()
-      |> TestReferences.merge_callers(TestReferences.callers_by_callee(exports))
+      |> TestReferences.merge_callers(test_callers)
 
-    entry_points = EntryPoints.all(source_index, exports) |> MapSet.new()
+    entry_points =
+      EntryPoints.all(source_index, collected, beam_calls, config)
+      |> MapSet.new()
 
     results =
-      exports
+      collected.exports
       |> Enum.reject(fn %{mfa: mfa} -> Ignore.ignored?(mfa, ignore) end)
       |> Enum.map(fn export ->
         callers = Map.get(callers_by_callee, export.mfa, [])
@@ -51,42 +60,51 @@ defmodule DeadCode.Analyze do
   end
 
   def verify(mfa_string, opts \\ []) do
-    with {:ok, mfa} <- MFA.parse(mfa_string) do
-      source_index = SourceIndex.build()
-      calls = XrefUsed.calls()
-      exports = CollectExports.all(Keyword.put(opts, :source_index, source_index))
+    with {:ok, raw_mfa} <- MFA.parse(mfa_string) do
+      config = Config.load(opts)
+      collected = CollectExports.collect(config, opts)
 
-      callers =
-        calls
-        |> Enum.filter(fn call -> call.callee == mfa end)
-        |> summarize_callers()
+      source_index =
+        SourceIndex.build(config, Keyword.put(opts, :module_to_file, collected.module_to_file))
 
-      test_callers =
-        TestReferences.callers_by_callee(exports)
-        |> Map.get(mfa, [])
-        |> summarize_callers()
+      ignore =
+        Ignore.load(
+          source_index,
+          config,
+          Keyword.get(opts, :ignore_path, ".dead_code_ignore.exs")
+        )
 
-      entry_points = EntryPoints.all(source_index, exports) |> MapSet.new()
+      canonical_mfa = Map.get(collected.default_aliases, raw_mfa, raw_mfa)
+      beam_calls = XrefUsed.calls(collected, source_index)
+      test_callers_map = TestReferences.callers_by_callee(config, collected, opts)
+
+      entry_points =
+        EntryPoints.all(source_index, collected, beam_calls, config)
+        |> MapSet.new()
+
+      matching_beam = Enum.filter(beam_calls, fn call -> call.callee == canonical_mfa end)
+      matching_test = Map.get(test_callers_map, canonical_mfa, [])
+      all_callers = matching_beam ++ matching_test
 
       %{
-        mfa: mfa,
-        formatted: MFA.format(mfa),
-        entry_point: MapSet.member?(entry_points, mfa),
-        framework_entry: EntryPoints.framework_entry?(mfa),
-        callers: callers ++ test_callers
+        mfa: canonical_mfa,
+        formatted: MFA.format(canonical_mfa),
+        entry_point: MapSet.member?(entry_points, canonical_mfa),
+        ignored: Ignore.ignored?(canonical_mfa, ignore),
+        category: categorize(canonical_mfa, all_callers, entry_points),
+        callers: summarize_callers(all_callers)
       }
     end
   end
 
   defp categorize(mfa, callers, entry_points) do
-    lib_callers = Enum.filter(callers, fn call -> SourceIndex.lib_file?(call.file) end)
-    test_callers = Enum.filter(callers, fn call -> SourceIndex.test_file?(call.file) end)
+    beam_callers = Enum.filter(callers, fn call -> call.source == :beam end)
+    test_callers = Enum.filter(callers, fn call -> call.source == :test end)
 
     cond do
-      lib_callers != [] -> :used
-      test_callers != [] -> :test_only
+      beam_callers != [] -> :used
       MapSet.member?(entry_points, mfa) -> :review
-      EntryPoints.framework_entry?(mfa) -> :review
+      test_callers != [] -> :test_only
       true -> :likely_dead
     end
   end

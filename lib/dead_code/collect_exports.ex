@@ -1,45 +1,107 @@
 defmodule DeadCode.CollectExports do
   @moduledoc false
 
-  alias DeadCode.{Config, MFA}
+  alias DeadCode.{Config, MFA, SourceIndex}
 
   def all(opts \\ []) do
-    module_filter = Keyword.get(opts, :module)
-    source_index = Keyword.get(opts, :source_index, DeadCode.SourceIndex.build())
-    otp_app = Keyword.get(opts, :otp_app, Config.otp_app())
-
-    modules =
-      if otp_app do
-        case :application.get_key(otp_app, :modules) do
-          {:ok, mods} -> mods
-          :undefined -> []
-        end
-      else
-        []
-      end
-
-    modules
-    |> Enum.sort()
-    |> Enum.flat_map(&exports_for(&1, source_index))
-    |> Enum.filter(fn %{file: file} -> is_binary(file) end)
-    |> maybe_filter_module(module_filter)
+    config = Config.load(opts)
+    collect(config, opts).exports
   end
 
-  defp exports_for(module, source_index) do
-    with {:module, _} <- Code.ensure_loaded(module),
-         exports when is_list(exports) <- module.module_info(:exports) do
-      exports
-      |> Enum.filter(fn {name, _arity} -> MFA.export_name?(name) end)
-      |> Enum.map(fn {name, arity} ->
-        %{
-          mfa: {module, name, arity},
-          file: Map.get(source_index.module_to_file, module)
-        }
+  def collect(config, opts \\ []) do
+    module_filter = Keyword.get(opts, :module)
+    modules = SourceIndex.resolve_modules(config, opts) |> Enum.sort()
+
+    {all_exports, behaviours, default_aliases, module_to_file, debug_infos} =
+      Enum.reduce(modules, {[], %{}, %{}, %{}, %{}}, fn module,
+                                                        {exps, behs, aliases, files, infos} ->
+        case collect_module(module) do
+          nil ->
+            {exps, behs, aliases, files, infos}
+
+          mod_data ->
+            {
+              exps ++ mod_data.exports,
+              Map.put(behs, module, mod_data.behaviours),
+              Map.merge(aliases, mod_data.default_aliases),
+              Map.put(files, module, mod_data.file),
+              Map.put(infos, module, mod_data.debug_info)
+            }
+        end
       end)
+
+    %{
+      modules: modules,
+      all_exports: all_exports,
+      exports: maybe_filter_module(all_exports, module_filter),
+      behaviours: behaviours,
+      default_aliases: default_aliases,
+      module_to_file: module_to_file,
+      debug_infos: debug_infos
+    }
+  end
+
+  defp collect_module(module) do
+    with {:ok, info} <- SourceIndex.beam_debug_info(module) do
+      mod_file = SourceIndex.normalize_path(info.file)
+      behaviours = for {:behaviour, b} <- info.attributes, do: b
+
+      user_defs =
+        info.definitions
+        |> Enum.filter(fn {{fun, _arity}, kind, meta, _clauses} ->
+          kind == :def and MFA.export_name?(fun) and not generated_def?(meta)
+        end)
+
+      default_aliases =
+        Enum.reduce(user_defs, %{}, fn {{fun, max_arity}, _kind, meta, _clauses}, acc ->
+          case Keyword.get(meta, :defaults, 0) do
+            defaults when is_integer(defaults) and defaults > 0 ->
+              Enum.reduce((max_arity - defaults)..(max_arity - 1), acc, fn arity, inner ->
+                Map.put(inner, {module, fun, arity}, {module, fun, max_arity})
+              end)
+
+            _ ->
+              acc
+          end
+        end)
+
+      exports =
+        user_defs
+        |> Enum.reject(fn {{fun, arity}, _kind, _meta, _clauses} ->
+          Map.has_key?(default_aliases, {module, fun, arity})
+        end)
+        |> Enum.map(fn {{fun, arity}, _kind, _meta, _clauses} ->
+          %{
+            mfa: {module, fun, arity},
+            file: mod_file
+          }
+        end)
+        |> Enum.sort_by(& &1.mfa)
+
+      %{
+        file: mod_file,
+        behaviours: behaviours,
+        default_aliases: default_aliases,
+        exports: exports,
+        debug_info: info
+      }
     else
-      _ -> []
+      _ -> nil
     end
   end
+
+  defp generated_def?(meta) do
+    Keyword.get(meta, :generated, false) == true or
+      Keyword.get(meta, :context) != nil or
+      deps_file?(Keyword.get(meta, :file))
+  end
+
+  defp deps_file?({file, _line}) do
+    normalized = SourceIndex.normalize_path(file)
+    String.starts_with?(normalized, "deps/") or String.contains?(normalized, "/deps/")
+  end
+
+  defp deps_file?(_), do: false
 
   defp maybe_filter_module(exports, nil), do: exports
 
